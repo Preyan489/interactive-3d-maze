@@ -46,31 +46,36 @@ export function setPlayerPosition(x, y, z) {
 }
 
 /**
- * Get AABB for a wall mesh (Box3 from geometry).
- * @param {THREE.Mesh} mesh
- * @returns {THREE.Box3}
- */
-function getAABB(mesh) {
-  const box = new THREE.Box3().setFromObject(mesh);
-  return box;
-}
-
-/**
  * Resolve capsule (cylinder) vs AABB. Simplified: treat player as sphere at feet and at head.
- * Stub: push position out of each wall AABB.
+ * Push the player circle out of wall AABBs using closest-point resolution.
  */
 function resolveVsAABB(pos, radius, box) {
-  const cx = (box.min.x + box.max.x) / 2;
-  const cz = (box.min.z + box.max.z) / 2;
-  const hx = (box.max.x - box.min.x) / 2 + radius;
-  const hz = (box.max.z - box.min.z) / 2 + radius;
-  const dx = pos.x - cx;
-  const dz = pos.z - cz;
-  if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) return;
-  const ax = hx - Math.abs(dx);
-  const az = hz - Math.abs(dz);
-  if (ax < az) pos.x += dx > 0 ? ax : -ax;
-  else pos.z += dz > 0 ? az : -az;
+  const closestX = THREE.MathUtils.clamp(pos.x, box.min.x, box.max.x);
+  const closestZ = THREE.MathUtils.clamp(pos.z, box.min.z, box.max.z);
+  let dx = pos.x - closestX;
+  let dz = pos.z - closestZ;
+  const distanceSq = dx * dx + dz * dz;
+
+  if (distanceSq > 0 && distanceSq < radius * radius) {
+    const distance = Math.sqrt(distanceSq);
+    const push = radius - distance + 0.001;
+    pos.x += (dx / distance) * push;
+    pos.z += (dz / distance) * push;
+    return;
+  }
+
+  if (distanceSq !== 0) return;
+
+  const pushLeft = Math.abs(pos.x - box.min.x);
+  const pushRight = Math.abs(box.max.x - pos.x);
+  const pushTop = Math.abs(pos.z - box.min.z);
+  const pushBottom = Math.abs(box.max.z - pos.z);
+  const minPush = Math.min(pushLeft, pushRight, pushTop, pushBottom);
+
+  if (minPush === pushLeft) pos.x = box.min.x - radius - 0.001;
+  else if (minPush === pushRight) pos.x = box.max.x + radius + 0.001;
+  else if (minPush === pushTop) pos.z = box.min.z - radius - 0.001;
+  else pos.z = box.max.z + radius + 0.001;
 }
 
 /**
@@ -80,11 +85,11 @@ function resolveVsAABB(pos, radius, box) {
  */
 export function updateCollision(body, mazeGroup) {
   if (!getMazeMeshes || !mazeGroup) return;
-  const group = mazeGroup;
-  group.traverse((obj) => {
-    if (obj.isMesh && obj.geometry?.type === 'BoxGeometry') {
-      const box = getAABB(obj);
-      resolveVsAABB(body.position, body.radius, box);
-    }
-  });
+
+  for (let i = 0; i < 3; i++) {
+    mazeGroup.traverse((obj) => {
+      if (!obj.isMesh || !obj.userData.isWall || !obj.userData.collisionBox) return;
+      resolveVsAABB(body.position, body.radius, obj.userData.collisionBox);
+    });
+  }
 }
